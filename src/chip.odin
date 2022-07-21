@@ -65,8 +65,9 @@ execute :: proc(chip: ^Chip) {
 			vm.chip.output_pins[addr] = pop(vm)
 
 		case .Op_Nand:
-			a, b := pop(vm), pop(vm)
-			push(vm, !(a.(bool) & b.(bool)))
+			a := pop(vm).(bool)
+			b := pop(vm).(bool)
+			push(vm, !(a & b))
 
 		}
 

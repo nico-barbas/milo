@@ -141,7 +141,7 @@ Workbench :: struct {
 	outputs:       [dynamic]Pin_Interface,
 	output_values: [dynamic]Value,
 	chips:         [dynamic]Chip_Interface,
-	connections:   map[Pin_Handle]Pin_Connection,
+	circuits:      map[Pin_Handle]Circuit_Simulation,
 	state:         enum {
 		Planning,
 		Simulating,
@@ -150,25 +150,33 @@ Workbench :: struct {
 	prototypes:    map[string]Chip,
 	tick_rate:     f32,
 	timer:         f32,
-	step:          int,
-	remaining:     [dynamic]Pin_Connection,
-	currents:      [dynamic]Pin_Connection,
-	circuit_sim:   []Circuit_Simulation,
+	commands:      [dynamic]Runtime_Command,
 }
 
-Pin_Connection :: struct {
-	from:       Pin_Handle,
-	to:         Pin_Handle,
-	runtime_id: int,
+Runtime_Command :: struct {
+	kind:       enum {
+		Load,
+		Exe,
+	},
+	circuit_id: int,
+	chip_id:    string,
 }
 
 Circuit_Simulation :: struct {
+	// Building states
+	from:       Pin_Handle,
+	to:         Pin_Handle,
+
+	// Runtime states
+	runtime_id: int,
 	state:      enum {
 		Waiting,
 		Processing,
 		Processed,
 	},
 	value:      Value,
+
+	// Graphical states
 	start, end: Vector,
 	particles:  [10]Rectangle,
 	count:      int,
@@ -227,12 +235,12 @@ remove_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 
 remove_chip_interface :: proc(w: ^Workbench, c: ^Chip_Interface, id: int) {
 	for pin in c.pins {
-		for to, connection in w.connections {
-			if pin_handle_equal(connection.from, pin.handle) {
-				delete_key(&w.connections, to)
+		for to, circuit in w.circuits {
+			if pin_handle_equal(circuit.from, pin.handle) {
+				delete_key(&w.circuits, to)
 				continue
-			} else if pin_handle_equal(connection.to, pin.handle) {
-				delete_key(&w.connections, to)
+			} else if pin_handle_equal(circuit.to, pin.handle) {
+				delete_key(&w.circuits, to)
 				continue
 			}
 		}
@@ -273,13 +281,13 @@ get_pin :: proc(w: ^Workbench, h: Pin_Handle) -> (pin: Pin_Interface) {
 connect_pins :: proc(w: ^Workbench, start: ^Pin_Interface, end: ^Pin_Interface) {
 	if pin_compatible(start.handle.kind, end.handle.kind) {
 		insert := true
-		if connection, exist := w.connections[end.handle]; exist {
-			if pin_handle_equal(start.handle, connection.from) {
+		if circuit, exist := w.circuits[end.handle]; exist {
+			if pin_handle_equal(start.handle, circuit.from) {
 				insert = false
 			}
 		}
 		if insert {
-			w.connections[end.handle] = {
+			w.circuits[end.handle] = {
 				from = start.handle,
 				to   = end.handle,
 			}
@@ -290,26 +298,47 @@ connect_pins :: proc(w: ^Workbench, start: ^Pin_Interface, end: ^Pin_Interface) 
 start_workbench_simulation :: proc(w: ^Workbench, prototypes: map[string]Chip) {
 	w.state = .Simulating
 	w.prototypes = prototypes
-	w.circuit_sim = make([]Circuit_Simulation, len(w.connections))
 
-	i := 0
-	for _, connection in w.connections {
-		start := get_pin(w, connection.from)
-		end := get_pin(w, connection.to)
-		w.circuit_sim[i] = {
-			state = .Processing if connection.from.kind == .Builtin_In else .Waiting,
-			start = {start.rect.x, start.rect.y},
-			end = {end.rect.x, end.rect.y},
+	// i := 0
+	// for _, circuit in w.circuits {
+	// 	start := get_pin(w, connection.from)
+	// 	end := get_pin(w, connection.to)
+	// 	w.circuit_sim[i] = {
+	// 		state = .Processing if connection.from.kind == .Builtin_In else .Waiting,
+	// 		start = {start.rect.x, start.rect.y},
+	// 		end = {end.rect.x, end.rect.y},
+	// 	}
+	// 	c := connection
+	// 	c.runtime_id = i
+	// 	if connection.from.kind == .Builtin_In {
+	// 		w.circuit_sim[i].value = w.input_values[connection.from.id]
+	// 		append(&w.currents, c)
+	// 	} else {
+	// 		append(&w.remaining, c)
+	// 	}
+	// 	i += 1
+	// }
+
+	batch_loads :: proc(
+		w: ^Workbench,
+		chips: ^[dynamic]^Chip_Interface,
+		cir: ^[dynamic]^Circuit_Simulation,
+	) {
+		for circuit in cir {
+			append(
+				&w.commands,
+				Runtime_Command{kind = .Load, circuit_id = circuit.runtime_id},
+			)
+			append(chips, circuit.from.parent)
 		}
-		c := connection
-		c.runtime_id = i
-		if connection.from.kind == .Builtin_In {
-			w.circuit_sim[i].value = w.input_values[connection.from.id]
-			append(&w.currents, c)
-		} else {
-			append(&w.remaining, c)
-		}
-		i += 1
+
+		clear(&cir)
+	}
+
+	chips := make([dynamic]^Chip_Interface, context.temp_allocator)
+	circuits := make([dynamic]^Circuit_Simulation, context.temp_allocator)
+	for out in w.outputs {
+		append(&circuits, &w.circuits[out.handle])
 	}
 }
 
@@ -347,6 +376,7 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 					chips[interface] = w.prototypes[interface.id]
 				}
 				chips[interface].input_pins[connection.to.id] = w.circuit_sim[id].value
+				fmt.println(chips[interface].input_pins[connection.to.id])
 			case:
 				assert(false)
 			}
@@ -377,7 +407,7 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 				}
 			}
 			for rid in to_remove {
-				unordered_remove(&w.remaining, rid)
+				ordered_remove(&w.remaining, rid)
 			}
 		}
 	}
