@@ -3,14 +3,29 @@ package main
 import rl "vendor:raylib"
 
 main :: proc() {
-	rl.InitWindow(600, 800, "Milo")
+	g := new_clone(
+		Game{
+			on_load = on_load,
+			on_update = on_update,
+			on_draw = on_draw,
+			on_exit = on_exit,
+		},
+	)
+
+	rl.InitWindow(800, 600, "Milo")
+	defer rl.CloseWindow()
+
 	rl.SetTargetFPS(60)
+	g->on_load()
 	for !rl.WindowShouldClose() {
+		g->on_update()
+
 		rl.BeginDrawing()
-		rl.ClearBackground({255, 255, 255, 255})
+		rl.ClearBackground({0, 0, 0, 255})
 		{
-			rl.DrawRectangleRec({100, 100, 100, 100}, {195, 55, 0, 255})
+			g->on_draw()
 		}
 		rl.EndDrawing()
 	}
+	g->on_exit()
 }
