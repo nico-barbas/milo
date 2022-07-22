@@ -253,7 +253,27 @@ add_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 }
 
 remove_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
-
+	handle: Pin_Handle
+	#partial switch kind {
+	case .Builtin_In:
+		handle = w.inputs[len(w.inputs)-1]
+		ordered_remove(&w.inputs, len(w.inputs) - 1)
+	case .Builtin_Out:
+		handle = w.outputs[len(w.outputs)-1]
+		ordered_remove(&w.outputs, len(w.outputs) - 1)
+	}
+	for to, circuit in w.circuits {
+		#partial switch kind {
+		case .Builtin_In:
+			if pin_handle_equal(hande, circuit.from) {
+				delete_key(&w.circuits, to)
+			}
+		case .Builtin_Out:
+			if pin_handle_equal(handle, to) {
+				delete_key(&w.circuits, to)
+			}
+		}
+	}
 }
 
 remove_chip_interface :: proc(w: ^Workbench, c: ^Chip_Interface, id: int) {
