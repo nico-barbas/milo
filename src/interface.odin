@@ -335,6 +335,18 @@ start_workbench_simulation :: proc(w: ^Workbench, prototypes: map[string]Chip) {
 		clear(&cir)
 	}
 
+	batch_loads :: proc(
+		w: ^Workbench,
+		chips: ^[dynamic]^Chip_Interface,
+		cir: ^[dynamic]^Circuit_Simulation,
+	) {
+		for chip in chips {
+			append(
+				&w.commands,
+				Runtime_Command{kind = .Exe, chip_id = chip.id},
+			)
+		}
+	} 
 	chips := make([dynamic]^Chip_Interface, context.temp_allocator)
 	circuits := make([dynamic]^Circuit_Simulation, context.temp_allocator)
 	for out in w.outputs {
