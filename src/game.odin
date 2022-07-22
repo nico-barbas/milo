@@ -47,6 +47,8 @@ Theme_Palette :: enum {
 	Separator,
 
 	// Gameplay elements
+	Bit_On,
+	Bit_Off,
 	Chip,
 	Pin,
 	Circuit_Wait,
@@ -70,6 +72,7 @@ Cursor :: struct {
 
 Cursor_Selection :: union {
 	^Chip_Interface,
+	^Workbench_Pin,
 	^Pin_Interface,
 }
 
@@ -87,6 +90,8 @@ on_load :: proc(g: ^Game) {
 			.Text_Dark = {44, 38, 44, 255},
 			.Text_Light = {235, 219, 178, 255},
 			.Separator = {60, 54, 60, 255},
+			.Bit_Off = {9, 11, 13, 255},
+			.Bit_On = {251, 70, 48, 255},
 			.Chip = {},
 			.Pin = {9, 11, 13, 255},
 			.Circuit_Wait = {111, 107, 91, 255},
@@ -166,6 +171,11 @@ on_update :: proc(g: ^Game) {
 				remove_chip_interface(&g.bench, h, g.cursor.chip_id)
 			}
 
+		case ^Workbench_Pin:
+			if is_mouse_pressed(.LEFT) && h.handle.kind == .Builtin_In {
+				h.on = !h.on
+			}
+
 		case ^Pin_Interface:
 			if is_mouse_pressed(.LEFT) {
 				g.action = .Connect_Pins
@@ -196,7 +206,7 @@ on_update :: proc(g: ^Game) {
 	case .Connect_Pins:
 		if is_mouse_pressed(.LEFT) {
 			switch h in g.cursor.hover {
-			case ^Chip_Interface:
+			case ^Chip_Interface, ^Workbench_Pin:
 			case ^Pin_Interface:
 				connect_pins(&g.bench, g.cursor.selection.(^Pin_Interface), h)
 			case:

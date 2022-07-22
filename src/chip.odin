@@ -7,6 +7,19 @@ Chip :: struct {
 	bytecode:    []byte,
 }
 
+clone_chip :: proc(c: ^Chip, alloc := context.allocator) -> ^Chip {
+	result := new_clone(
+		Chip{
+			input_pins = make([]Value, len(c.input_pins)),
+			output_pins = make([]Value, len(c.output_pins)),
+			bytecode = c.bytecode,
+		},
+	)
+	copy(c.input_pins, result.input_pins)
+	copy(c.output_pins, result.output_pins)
+	return result
+}
+
 Value :: union {
 	bool,
 }

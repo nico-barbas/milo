@@ -132,29 +132,7 @@ move_chip_interface :: proc(c: ^Chip_Interface, p: Vector) {
 	set_pins_position(c)
 }
 
-WORKBENCH_MARGIN :: 200
-
-Workbench :: struct {
-	outline:       Rectangle,
-	inputs:        [dynamic]Pin_Interface,
-	input_values:  [dynamic]Value,
-	outputs:       [dynamic]Pin_Interface,
-	output_values: [dynamic]Value,
-	chips:         [dynamic]Chip_Interface,
-	circuits:      map[Pin_Handle]Circuit_Simulation,
-	state:         enum {
-		Planning,
-		Simulating,
-	},
-	// Simulation data
-	prototypes:    map[string]Chip,
-	tick_rate:     f32,
-	timer:         f32,
-	open:          [dynamic]^Circuit_Simulation,
-	currents:      [dynamic]^Circuit_Simulation,
-}
-
-Circuit_Simulation :: struct {
+Circuit_Interface :: struct {
 	// Building states
 	from:       Pin_Handle,
 	to:         Pin_Handle,
@@ -175,6 +153,36 @@ Circuit_State :: enum {
 	Waiting,
 	Processing,
 	Loaded,
+}
+
+WORKBENCH_MARGIN :: 200
+WORKBENCH_TOGGLE_SIZE :: 32
+WORKBENCH_TOGGLE_WIDTH :: 10
+WORKBENCH_TOGGLE_HEIGHT :: 6
+
+Workbench :: struct {
+	outline:    Rectangle,
+	inputs:     [dynamic]Workbench_Pin,
+	outputs:    [dynamic]Workbench_Pin,
+	chips:      [dynamic]Chip_Interface,
+	circuits:   map[Pin_Handle]Circuit_Interface,
+	state:      enum {
+		Planning,
+		Simulating,
+	},
+	// Simulation data
+	prototypes: map[string]Chip,
+	tick_rate:  f32,
+	timer:      f32,
+	open:       [dynamic]^Circuit_Interface,
+	currents:   [dynamic]^Circuit_Interface,
+}
+
+Workbench_Pin :: struct {
+	using base:    Pin_Interface,
+	toggle:        Rectangle,
+	inner_circuit: Rectangle,
+	on:            bool,
 }
 
 init_workbench :: proc(w: ^Workbench, s: ^State) {
@@ -199,30 +207,46 @@ add_chip_interface :: proc(w: ^Workbench, p: Vector, id: string) {
 }
 
 add_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
-	pins: ^[dynamic]Pin_Interface
+	pins: ^[dynamic]Workbench_Pin
 	x: f32 = w.outline.x
 	y: f32 = WORKBENCH_MARGIN
+	offset: f32 = WORKBENCH_TOGGLE_SIZE / 2 + PIN_SIZE / 2 + WORKBENCH_TOGGLE_WIDTH
 	#partial switch kind {
 	case .Builtin_In:
 		pins = &w.inputs
-		append(&w.input_values, false)
 	case .Builtin_Out:
 		pins = &w.outputs
 		x += w.outline.width
-		append(&w.output_values, false)
+		offset *= -1
 	}
 
-	append(pins, Pin_Interface{})
+	append(pins, Workbench_Pin{})
 	padding := (w.outline.height - WORKBENCH_MARGIN * 2) / f32(len(pins))
 	for _, i in pins {
 		pins[i] = {
-			handle = {id = i, kind = kind},
-			rect = {
-				x - (PIN_SIZE / 2),
-				y + (padding / 2) - (PIN_SIZE / 2),
-				PIN_SIZE,
-				PIN_SIZE,
+			base = {
+				handle = {id = i, kind = kind},
+				rect = {
+					x - (PIN_SIZE / 2),
+					y + (padding / 2) - (PIN_SIZE / 2),
+					PIN_SIZE,
+					PIN_SIZE,
+				},
 			},
+			toggle = {
+				x - (WORKBENCH_TOGGLE_SIZE / 2),
+				y + (padding / 2) - (WORKBENCH_TOGGLE_SIZE / 2),
+				WORKBENCH_TOGGLE_SIZE,
+				WORKBENCH_TOGGLE_SIZE,
+			},
+			on = false,
+		}
+		pins[i].rect.x += offset
+		pins[i].inner_circuit = {
+			x if kind == .Builtin_In else x + offset,
+			pins[i].toggle.y + (pins[i].toggle.height / 2) - WORKBENCH_TOGGLE_HEIGHT / 2,
+			abs(offset),
+			WORKBENCH_TOGGLE_HEIGHT,
 		}
 		y += padding
 	}
@@ -251,15 +275,19 @@ is_workench_pin_selected :: proc(w: ^Workbench, p: Vector) -> (sel: Cursor_Selec
 	for _, i in w.inputs {
 		pin := &w.inputs[i]
 		if in_rect_bounds(pin.rect, p) {
-			sel = pin
+			sel = &pin.base
 			return
+		} else if in_rect_bounds(pin.toggle, p) {
+			sel = pin
 		}
 	}
 	for _, i in w.outputs {
 		pin := &w.outputs[i]
 		if in_rect_bounds(pin.rect, p) {
-			sel = pin
+			sel = &pin.base
 			return
+		} else if in_rect_bounds(pin.toggle, p) {
+			sel = pin
 		}
 	}
 	return
@@ -298,21 +326,24 @@ start_workbench_simulation :: proc(w: ^Workbench, prototypes: map[string]Chip) {
 	w.state = .Simulating
 	w.prototypes = prototypes
 
-	for k, circuit in w.circuits {
-		c := circuit
+	for k, _ in w.circuits {
+		circuit := &w.circuits[k]
 		start := get_pin(w, circuit.from).rect
 		end := get_pin(w, circuit.to).rect
-		c.start = {start.x, start.y}
-		c.end = {end.x, end.y}
+		circuit.start = {start.x, start.y}
+		circuit.end = {end.x, end.y}
 		if circuit.from.kind == .Builtin_In {
-			c.value = w.input_values[circuit.from.id]
-			c.state = .Processing
-			w.circuits[k] = c
+			circuit.value = w.inputs[circuit.from.id].on
+			circuit.state = .Processing
 			append(&w.currents, &w.circuits[k])
 		} else {
-			c.state = .Waiting
-			w.circuits[k] = c
+			circuit.value = nil
+			circuit.state = .Waiting
 			append(&w.open, &w.circuits[k])
+		}
+
+		if circuit.to.kind == .Builtin_Out {
+			w.outputs[circuit.to.id].on = false
 		}
 	}
 
@@ -326,7 +357,7 @@ start_workbench_simulation :: proc(w: ^Workbench, prototypes: map[string]Chip) {
 
 end_workbench_simulation :: proc(w: ^Workbench) {
 	w.state = .Planning
-	fmt.println(w.output_values)
+	fmt.println(w.outputs)
 
 	for handle in w.circuits {
 		circuit := &w.circuits[handle]
@@ -356,7 +387,7 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 		for circuit in w.currents {
 			#partial switch circuit.to.kind {
 			case .Builtin_Out:
-				w.output_values[circuit.to.id] = circuit.value
+				w.outputs[circuit.to.id].on = circuit.value.(bool)
 			case .In:
 				interface := circuit.to.parent
 				if _, exist := chips[interface]; !exist {
@@ -372,7 +403,7 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 		clear(&w.currents)
 
 		for interface in chips {
-			chip := &chips[interface]
+			chip := clone_chip(&chips[interface], context.temp_allocator)
 			ready := true
 			check_inputs: for pin_id in 0 ..< interface.in_count {
 				handle := Pin_Handle {
@@ -394,7 +425,7 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 
 			execute(chip)
 
-			left := make([dynamic]^Circuit_Simulation, context.temp_allocator)
+			left := make([dynamic]^Circuit_Interface, context.temp_allocator)
 			next: for circuit in w.open {
 				from := circuit.from
 				if from.parent == interface {
@@ -447,7 +478,6 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 					circuit.particles[j] = circuit.particles[circuit.count]
 					circuit.count -= 1
 				}
-				// fmt.println("boop:", circuit.count)
 			}
 		}
 	}
@@ -468,18 +498,6 @@ draw_workbench :: proc(s: ^State, w: ^Workbench) {
 
 	draw_rect_line(w.outline, s.outline_weight, s.theme[.Separator])
 
-	for pin in w.inputs {
-		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
-	}
-
-	for pin in w.outputs {
-		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
-	}
-
-	for chip in w.chips {
-		draw_chip_interface(s, chip)
-	}
-
 	for to, circuit in w.circuits {
 		start := get_pin(w, circuit.from)
 		end := get_pin(w, to)
@@ -496,6 +514,24 @@ draw_workbench :: proc(s: ^State, w: ^Workbench) {
 				draw_rect(circuit.particles[i], s.theme[.Process_Anim])
 			}
 		}
+	}
+
+	for pin in w.inputs {
+		draw_rect(pin.inner_circuit, s.theme[.Pin])
+		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
+		palette := Theme_Palette.Bit_On if pin.on else .Bit_Off
+		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.toggle, s.theme[palette])
+	}
+
+	for pin in w.outputs {
+		draw_rect(pin.inner_circuit, s.theme[.Pin])
+		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
+		palette := Theme_Palette.Bit_On if pin.on else .Bit_Off
+		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.toggle, s.theme[palette])
+	}
+
+	for chip in w.chips {
+		draw_chip_interface(s, chip)
 	}
 
 	y: f32 = 10
