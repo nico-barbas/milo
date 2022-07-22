@@ -108,9 +108,9 @@ draw_chip_interface :: proc(s: ^State, c: Chip_Interface) {
 	draw_rect({c.pos.x, c.pos.y, c.w, c.h}, {255, 255, 255, 255})
 
 	for pin in c.pins {
-		draw_rect(pin.rect, {255, 0, 0, 255})
+		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
 	}
-	draw_text(s.font, c.id, c.pos, 16, {0, 0, 0, 255})
+	draw_text(s, c.id, c.pos, .Text_Dark)
 }
 
 is_chip_selected :: proc(c: ^Chip_Interface, p: Vector) -> (select: Cursor_Selection) {
@@ -150,16 +150,8 @@ Workbench :: struct {
 	prototypes:    map[string]Chip,
 	tick_rate:     f32,
 	timer:         f32,
-	commands:      [dynamic]Runtime_Command,
-}
-
-Runtime_Command :: struct {
-	kind:       enum {
-		Load,
-		Exe,
-	},
-	circuit_id: int,
-	chip_id:    string,
+	open:          [dynamic]^Circuit_Simulation,
+	currents:      [dynamic]^Circuit_Simulation,
 }
 
 Circuit_Simulation :: struct {
@@ -169,11 +161,7 @@ Circuit_Simulation :: struct {
 
 	// Runtime states
 	runtime_id: int,
-	state:      enum {
-		Waiting,
-		Processing,
-		Processed,
-	},
+	state:      Circuit_State,
 	value:      Value,
 
 	// Graphical states
@@ -183,10 +171,21 @@ Circuit_Simulation :: struct {
 	timer:      f32,
 }
 
+Circuit_State :: enum {
+	Waiting,
+	Processing,
+	Loaded,
+}
+
 init_workbench :: proc(w: ^Workbench, s: ^State) {
-	cell := s.grid.cell_size
-	w.outline = {cell, cell, WIDTH - cell * 2, 600 - cell * 2}
-	w.tick_rate = 2.5
+	cell := s.cell_size
+	w.outline = {
+		x      = s.active_rect.x + cell,
+		y      = s.active_rect.y + cell,
+		width  = s.active_rect.width - cell * 2,
+		height = s.active_rect.height - cell * 2,
+	}
+	w.tick_rate = 2
 
 	// FIXME: Temp
 	add_workbench_pin(w, .Builtin_In)
@@ -299,58 +298,39 @@ start_workbench_simulation :: proc(w: ^Workbench, prototypes: map[string]Chip) {
 	w.state = .Simulating
 	w.prototypes = prototypes
 
-	// i := 0
-	// for _, circuit in w.circuits {
-	// 	start := get_pin(w, connection.from)
-	// 	end := get_pin(w, connection.to)
-	// 	w.circuit_sim[i] = {
-	// 		state = .Processing if connection.from.kind == .Builtin_In else .Waiting,
-	// 		start = {start.rect.x, start.rect.y},
-	// 		end = {end.rect.x, end.rect.y},
-	// 	}
-	// 	c := connection
-	// 	c.runtime_id = i
-	// 	if connection.from.kind == .Builtin_In {
-	// 		w.circuit_sim[i].value = w.input_values[connection.from.id]
-	// 		append(&w.currents, c)
-	// 	} else {
-	// 		append(&w.remaining, c)
-	// 	}
-	// 	i += 1
-	// }
-
-	batch_loads :: proc(
-		w: ^Workbench,
-		chips: ^[dynamic]^Chip_Interface,
-		cir: ^[dynamic]^Circuit_Simulation,
-	) {
-		for circuit in cir {
-			append(
-				&w.commands,
-				Runtime_Command{kind = .Load, circuit_id = circuit.runtime_id},
-			)
-			append(chips, circuit.from.parent)
+	for k, circuit in w.circuits {
+		c := circuit
+		start := get_pin(w, circuit.from).rect
+		end := get_pin(w, circuit.to).rect
+		c.start = {start.x, start.y}
+		c.end = {end.x, end.y}
+		if circuit.from.kind == .Builtin_In {
+			c.value = w.input_values[circuit.from.id]
+			c.state = .Processing
+			w.circuits[k] = c
+			append(&w.currents, &w.circuits[k])
+		} else {
+			c.state = .Waiting
+			w.circuits[k] = c
+			append(&w.open, &w.circuits[k])
 		}
-
-		clear(&cir)
 	}
 
-	batch_loads :: proc(
-		w: ^Workbench,
-		chips: ^[dynamic]^Chip_Interface,
-		cir: ^[dynamic]^Circuit_Simulation,
-	) {
-		for chip in chips {
-			append(
-				&w.commands,
-				Runtime_Command{kind = .Exe, chip_id = chip.id},
-			)
-		}
-	} 
-	chips := make([dynamic]^Chip_Interface, context.temp_allocator)
-	circuits := make([dynamic]^Circuit_Simulation, context.temp_allocator)
-	for out in w.outputs {
-		append(&circuits, &w.circuits[out.handle])
+	if len(w.currents) == 0 {
+		fmt.println("No pins connected to Workbench Input Pins, stopping simulation")
+		clear(&w.currents)
+		clear(&w.open)
+		end_workbench_simulation(w)
+	}
+}
+
+end_workbench_simulation :: proc(w: ^Workbench) {
+	w.state = .Planning
+	fmt.println(w.output_values)
+
+	for handle in w.circuits {
+		circuit := &w.circuits[handle]
+		circuit.state = .Waiting
 	}
 }
 
@@ -359,11 +339,8 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 		return
 	}
 
-	if len(w.remaining) == 0 && len(w.currents) == 0 {
-		w.state = .Planning
-		clear(&w.currents)
-		delete(w.circuit_sim)
-		fmt.println(w.output_values)
+	if len(w.open) == 0 && len(w.currents) == 0 {
+		end_workbench_simulation(w)
 		return
 	}
 
@@ -374,59 +351,77 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 		advance = true
 	}
 
-
 	if advance {
 		chips := make(map[^Chip_Interface]Chip, 10, context.temp_allocator)
-		for connection in w.currents {
-			id := connection.runtime_id
-			#partial switch connection.to.kind {
+		for circuit in w.currents {
+			#partial switch circuit.to.kind {
 			case .Builtin_Out:
-				w.output_values[connection.to.id] = w.circuit_sim[id].value
+				w.output_values[circuit.to.id] = circuit.value
 			case .In:
-				interface := connection.to.parent
+				interface := circuit.to.parent
 				if _, exist := chips[interface]; !exist {
 					chips[interface] = w.prototypes[interface.id]
 				}
-				chips[interface].input_pins[connection.to.id] = w.circuit_sim[id].value
-				fmt.println(chips[interface].input_pins[connection.to.id])
+
 			case:
 				assert(false)
 			}
-			w.circuit_sim[id].state = .Processed
+			circuit.state = .Loaded
 		}
+
 		clear(&w.currents)
-		for i in chips {
-			chip := &chips[i]
+
+		for interface in chips {
+			chip := &chips[interface]
+			ready := true
+			check_inputs: for pin_id in 0 ..< interface.in_count {
+				handle := Pin_Handle {
+					parent = interface,
+					kind   = .In,
+					id     = pin_id,
+				}
+				if w.circuits[handle].state == .Loaded {
+					chip.input_pins[pin_id] = w.circuits[handle].value
+				} else {
+					ready = false
+					break check_inputs
+				}
+			}
+
+			if !ready {
+				continue
+			}
+
 			execute(chip)
 
-			to_remove := make([dynamic]int, context.temp_allocator)
-			next: for connection, j in w.remaining {
-				from := connection.from
-				if from.parent == i {
-					for k in i.in_count ..< len(i.pins) {
-						if from.id == k {
-							append(&to_remove, j)
-							c := connection
-							append(&w.currents, c)
+			left := make([dynamic]^Circuit_Simulation, context.temp_allocator)
+			next: for circuit in w.open {
+				from := circuit.from
+				if from.parent == interface {
+					for j in interface.in_count ..< len(interface.pins) {
+						if from.id == j {
+							output_id := from.id - interface.in_count
+							circuit.value = chip.output_pins[output_id]
+							circuit.state = .Processing
 
-							cid := c.runtime_id
-							w.circuit_sim[cid].value =
-								chip.output_pins[from.id - i.in_count]
-							w.circuit_sim[cid].state = .Processing
+							append(&w.currents, circuit)
 							continue next
 						}
 					}
+				} else {
+					append(&left, circuit)
 				}
 			}
-			for rid in to_remove {
-				ordered_remove(&w.remaining, rid)
+			clear(&w.open)
+			for circuit in left {
+				append(&w.open, circuit)
 			}
 		}
 	}
 
 	CIRCUIT_TICK_RATE :: 0.5
-	for _, i in w.circuit_sim {
-		circuit := &w.circuit_sim[i]
+	for handle in w.circuits {
+		circuit := &w.circuits[handle]
 		if circuit.state == .Processing {
 			circuit.timer += dt
 			if circuit.timer >= CIRCUIT_TICK_RATE {
@@ -442,7 +437,6 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 
 			dir := circuit.end - circuit.start
 			norm := linalg.normalize(dir)
-			to_remove := make([dynamic]int, context.temp_allocator)
 			for j in 0 ..< circuit.count {
 				part := &circuit.particles[j]
 				part.x += norm.x * dt * 250
@@ -450,53 +444,88 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 
 				l := linalg.length2(Vector{part.x, part.y} - circuit.start)
 				if l >= linalg.length2(dir) {
-					append(&to_remove, j)
+					circuit.particles[j] = circuit.particles[circuit.count]
+					circuit.count -= 1
 				}
-			}
-			for j in to_remove {
-				circuit.particles[j] = circuit.particles[circuit.count]
-				circuit.count -= 1
+				// fmt.println("boop:", circuit.count)
 			}
 		}
 	}
 }
 
 draw_workbench :: proc(s: ^State, w: ^Workbench) {
+	circuit_state_to_clr :: proc(s: ^State, c_s: Circuit_State) -> Color {
+		switch c_s {
+		case .Waiting:
+			return s.theme[.Circuit_Wait]
+		case .Processing:
+			return s.theme[.Circuit_Process]
+		case .Loaded:
+			return s.theme[.Circuit_Loaded]
+		}
+		return {255, 0, 255, 255}
+	}
 
-	draw_rect_line(w.outline, 1, {255, 255, 255, 255})
+	draw_rect_line(w.outline, s.outline_weight, s.theme[.Separator])
 
 	for pin in w.inputs {
-		draw_rect(pin.rect, {255, 0, 0, 255})
+		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
 	}
 
 	for pin in w.outputs {
-		draw_rect(pin.rect, {255, 0, 0, 255})
+		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
 	}
 
 	for chip in w.chips {
 		draw_chip_interface(s, chip)
 	}
-	for to, connection in w.connections {
-		start := get_pin(w, connection.from)
+
+	for to, circuit in w.circuits {
+		start := get_pin(w, circuit.from)
 		end := get_pin(w, to)
 		draw_line(
 			{start.rect.x + PIN_SIZE / 2, start.rect.y + PIN_SIZE / 2},
 			{end.rect.x + PIN_SIZE / 2, end.rect.y + PIN_SIZE / 2},
-			1,
-			{255, 255, 255, 255},
+			s.line_weight,
+			circuit_state_to_clr(s, circuit.state),
 		)
-	}
 
-
-	FALSE_CLR :: Color{23, 95, 176, 255}
-	TRUE_CLR :: Color{155, 45, 155, 255}
-	if w.state == .Simulating {
-		for circuit in &w.circuit_sim {
-			// b := circuit.value.(bool)
+		if w.state == .Simulating {
 			if circuit.state != .Processing do continue
-			for particle in circuit.particles[:circuit.count] {
-				draw_rect(particle, TRUE_CLR) //if b else FALSE_CLR
+			for i in 0 ..< circuit.count {
+				draw_rect(circuit.particles[i], s.theme[.Process_Anim])
 			}
 		}
 	}
+
+	y: f32 = 10
+	ascend: f32 = 18
+	if w.state == .Simulating {
+		draw_text(s, "Remaining: ", {5, y}, .Text_Light)
+		y += ascend
+		for circuit in w.open {
+			details := fmt.tprintf(
+				"from: (%p, %s, %d) -> to: (%p, %s, %d)",
+				circuit.from.parent,
+				circuit.from.kind,
+				circuit.from.id,
+				circuit.to.parent,
+				circuit.to.kind,
+				circuit.to.id,
+			)
+			draw_text(s, details, {5, y}, .Text_Light)
+			y += ascend
+		}
+	}
+
+
+	// if w.state == .Simulating {
+	// 	for circuit in &w.circuit_sim {
+	// 		// b := circuit.value.(bool)
+	// 		if circuit.state != .Processing do continue
+	// 		for particle in circuit.particles[:circuit.count] {
+	// 			draw_rect(particle, TRUE_CLR) //if b else FALSE_CLR
+	// 		}
+	// 	}
+	// }
 }
