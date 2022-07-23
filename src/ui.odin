@@ -69,6 +69,8 @@ cut_rect :: proc(
 UI_Context :: struct {
 	layouts: [dynamic]Layout,
 	m_pos:   Vector,
+	m_left: bool,
+	pm_left: bool,
 }
 _ctx: ^UI_Context
 
@@ -76,13 +78,16 @@ set_ctx_current :: proc(ctx: ^UI_Context) {
 	_ctx = ctx
 }
 
-update_ui :: proc(ctx: ^UI_Context) {
+update_ui :: proc(ctx: ^UI_Context,m_pos: Vector,  m_left: bool) {
+	ctx.pm_left = ctx.m_left
+	ctx.m_left = m_left
+	ctx.m_pos = m_pos
 	for layout in &ctx.layouts {
 		for widget, i in layout.widgets {
 			switch w in widget {
 			case Button:
 				b := w
-				update_btn(&b, ctx.m_pos)
+				update_btn(&b, ctx.m_pos, ctx.m_left)
 				layout.widgets[i] = b
 			}
 		}
@@ -153,9 +158,12 @@ Widget :: union {
 	Button,
 }
 
+Button_ID :: distinct int
+
 Button :: struct {
 	rect:       Rectangle,
 	background: Background,
+	id: Button_ID,
 	state:      enum {
 		None,
 		Hovered,
@@ -165,12 +173,22 @@ Button :: struct {
 	clr:        Color,
 	press_clr:  Color,
 	hover_clr:  Color,
+	user_data: rawptr,
+	callback: proc(data: rawptr, id: Button_ID),
 }
 
-update_btn :: proc(b: ^Button, m_pos: Vector) {
+update_btn :: proc(b: ^Button, m_pos: Vector, m_left, pm_left: bool) {
 	if in_rect_bounds(b.rect, m_pos) {
-		b.state = .Hovered
-		b.background.clr = b.hover_clr
+		if m_left {
+			b.state = .Pressed
+			b.background.clr = b.hover_clr
+			if b.callback != nil {
+				b.callback(b.user_data, b.id)
+			}
+		} else {
+			b.state = .Hovered
+			b.background.clr = b.hover_clr
+		}
 	} else {
 		b.state = .None
 		b.background.clr = b.clr
