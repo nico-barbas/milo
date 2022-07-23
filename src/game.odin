@@ -7,6 +7,13 @@ GAME_WIDTH :: 1280
 GAME_HEIGHT :: 720
 FONT_SIZE :: 16
 
+WORKBENCH_MARGIN :: 200
+WORKBENCH_TOGGLE_SIZE :: 32
+WORKBENCH_TOGGLE_WIDTH :: 10
+WORKBENCH_TOGGLE_HEIGHT :: 6
+WORKBENCH_BTN_SIZE :: WORKBENCH_TOGGLE_SIZE * 0.75
+WORKBENCH_BTN_PADDING :: 5
+
 Game :: struct {
 	arena:          mem.Arena,
 	allocator:      mem.Allocator,
@@ -134,6 +141,73 @@ on_load :: proc(g: ^Game) {
 	}
     //odinfmt: enable
 	init_workbench(&g.bench, &g.s)
+	in_panel := add_layout(
+		{
+			g.bench.outline.x - (WORKBENCH_BTN_SIZE / 2) + g.s.outline_weight / 2,
+			g.bench.outline.y + (WORKBENCH_MARGIN / 4),
+			WORKBENCH_BTN_SIZE,
+			g.bench.outline.height - WORKBENCH_MARGIN,
+		},
+		Background{kind = .Transparent},
+		.Up,
+		0,
+		0,
+		WORKBENCH_BTN_PADDING,
+	)
+	add_widget(
+		in_panel,
+		Button{
+			text = "-",
+			background = {kind = .Solid},
+			clr = g.s.theme[.Background_Light],
+			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+		},
+		WORKBENCH_BTN_SIZE,
+	)
+	add_widget(
+		in_panel,
+		Button{
+			text = "+",
+			background = {kind = .Solid},
+			clr = g.s.theme[.Background_Light],
+			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+		},
+		WORKBENCH_BTN_SIZE,
+	)
+
+	out_panel := add_layout(
+		{
+			in_panel.full.x + g.bench.outline.width + g.s.outline_weight / 2,
+			g.bench.outline.y + WORKBENCH_MARGIN / 4,
+			WORKBENCH_TOGGLE_SIZE,
+			g.bench.outline.height - WORKBENCH_MARGIN,
+		},
+		Background{kind = .Transparent},
+		.Up,
+		0,
+		0,
+		WORKBENCH_BTN_PADDING,
+	)
+	add_widget(
+		out_panel,
+		Button{
+			text = "-",
+			background = {kind = .Solid},
+			clr = g.s.theme[.Background_Light],
+			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+		},
+		WORKBENCH_BTN_SIZE,
+	)
+	add_widget(
+		out_panel,
+		Button{
+			text = "+",
+			background = {kind = .Solid},
+			clr = g.s.theme[.Background_Light],
+			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+		},
+		WORKBENCH_BTN_SIZE,
+	)
 }
 
 on_update :: proc(g: ^Game) {
@@ -246,4 +320,8 @@ deselect :: proc(g: ^Game) {
 	g.action = .Idle
 	g.cursor.selection = nil
 	g.cursor.offset = {}
+}
+
+on_btn_pressed_callback :: proc(data: rawptr, btn_id: int) {
+
 }

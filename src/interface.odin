@@ -155,11 +155,6 @@ Circuit_State :: enum {
 	Loaded,
 }
 
-WORKBENCH_MARGIN :: 200
-WORKBENCH_TOGGLE_SIZE :: 32
-WORKBENCH_TOGGLE_WIDTH :: 10
-WORKBENCH_TOGGLE_HEIGHT :: 6
-
 Workbench :: struct {
 	outline:    Rectangle,
 	inputs:     [dynamic]Workbench_Pin,
@@ -256,16 +251,16 @@ remove_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 	handle: Pin_Handle
 	#partial switch kind {
 	case .Builtin_In:
-		handle = w.inputs[len(w.inputs)-1]
+		handle = w.inputs[len(w.inputs) - 1].handle
 		ordered_remove(&w.inputs, len(w.inputs) - 1)
 	case .Builtin_Out:
-		handle = w.outputs[len(w.outputs)-1]
+		handle = w.outputs[len(w.outputs) - 1].handle
 		ordered_remove(&w.outputs, len(w.outputs) - 1)
 	}
 	for to, circuit in w.circuits {
 		#partial switch kind {
 		case .Builtin_In:
-			if pin_handle_equal(hande, circuit.from) {
+			if pin_handle_equal(handle, circuit.from) {
 				delete_key(&w.circuits, to)
 			}
 		case .Builtin_Out:

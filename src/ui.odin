@@ -2,6 +2,7 @@ package main
 
 Background :: struct {
 	kind: enum {
+		Transparent,
 		Solid,
 		Slice,
 	},
@@ -37,23 +38,30 @@ ensure_cut_valid :: proc(rl: Rect_Layout, cut: Rect_Cut, size: f32) -> (ok: bool
 	return
 }
 
-cut_rect :: proc(rl: ^Rect_Layout, cut: Rect_Cut, size: f32) -> (result: Rectangle) {
+cut_rect :: proc(
+	rl: ^Rect_Layout,
+	cut: Rect_Cut,
+	size: f32,
+	p: f32 = 0,
+) -> (
+	result: Rectangle,
+) {
 	r := rl.current
 	switch cut {
 	case .Left:
 		result = {r.x, r.y, size, r.height}
-		rl.current.x += size
-		rl.current.width -= size
+		rl.current.x += size + p
+		rl.current.width -= size + p
 	case .Right:
 		result = {r.x + r.width - size, r.y, size, r.height}
-		rl.current.width -= size
+		rl.current.width -= size + p
 	case .Up:
 		result = {r.x, r.y, r.width, size}
-		rl.current.y += size
-		rl.current.height -= size
+		rl.current.y += size + p
+		rl.current.height -= size + p
 	case .Down:
 		result = {r.x, r.y + r.height - size, r.width, size}
-		rl.current.height -= size
+		rl.current.height -= size + p
 	}
 	return
 }
@@ -84,6 +92,7 @@ update_ui :: proc(ctx: ^UI_Context) {
 draw_ui :: proc(ctx: ^UI_Context, s: ^State) {
 	draw_background :: proc(s: ^State, b: Background, bounds: Rectangle) {
 		switch b.kind {
+		case .Transparent:
 		case .Solid:
 			draw_rect(bounds, b.clr)
 		case .Slice:
@@ -132,7 +141,7 @@ add_layout :: proc(
 
 add_widget :: proc(l: ^Layout, widg: Widget, size: f32) {
 	widget := widg
-	w_rect := cut_rect(l, l.direction, size)
+	w_rect := cut_rect(l, l.direction, size, l.padding)
 	switch w in &widget {
 	case Button:
 		w.rect = w_rect
