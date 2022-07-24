@@ -8,11 +8,15 @@ GAME_HEIGHT :: 720
 FONT_SIZE :: 16
 
 WORKBENCH_MARGIN :: 200
+WORKBENCH_MIN_PINS :: 1
+WORKBENCH_MAX_PINS :: 6
 WORKBENCH_TOGGLE_SIZE :: 32
 WORKBENCH_TOGGLE_WIDTH :: 10
 WORKBENCH_TOGGLE_HEIGHT :: 6
 WORKBENCH_BTN_SIZE :: WORKBENCH_TOGGLE_SIZE * 0.75
 WORKBENCH_BTN_PADDING :: 5
+
+WORKBENCH_TICK_RATE :: 2
 
 Game :: struct {
 	arena:          mem.Arena,
@@ -31,11 +35,13 @@ Game :: struct {
 	bench:          Workbench,
 	action:         Action,
 	cursor:         Cursor,
+	prototype_id:   string,
 	// cmd_panel
 }
 
 State :: struct {
 	active_rect:    Rectangle,
+	bottom_rect:    Rectangle,
 	font:           Font,
 	theme:          map[Theme_Palette]Color,
 	outline_weight: f32,
@@ -62,6 +68,10 @@ Theme_Palette :: enum {
 	Circuit_Process,
 	Circuit_Loaded,
 	Process_Anim,
+	Nand_Chip,
+	And_Chip,
+	Or_Chip,
+	Not_Chip,
 }
 
 Game_Button_ID :: enum Button_ID {
@@ -69,6 +79,12 @@ Game_Button_ID :: enum Button_ID {
 	Input_Sub,
 	Output_Add,
 	Output_Sub,
+
+	//
+	Nand,
+	And,
+	Or,
+	Not,
 }
 
 Action :: enum {
@@ -78,10 +94,14 @@ Action :: enum {
 }
 
 Cursor :: struct {
-	hover:     Cursor_Selection,
-	selection: Cursor_Selection,
-	chip_id:   int,
-	offset:    Vector,
+	hover:          Cursor_Selection,
+	selection:      Cursor_Selection,
+	chip_id:        int,
+	offset:         Vector,
+	start_point:    Vector,
+	current_point:  Vector,
+	circuit_schema: [10]Edge,
+	schema_count:   int,
 }
 
 Cursor_Selection :: union {
@@ -92,10 +112,10 @@ Cursor_Selection :: union {
 
 on_load :: proc(g: ^Game) {
 	game_layout := new_rect_layout({0, 0, GAME_WIDTH, GAME_HEIGHT})
-	bottom_panel := cut_rect(&game_layout, .Down, 40)
 
 	g.s = {
 		active_rect = game_layout.current,
+		bottom_rect = cut_rect(&game_layout, .Down, 40),
 		font = load_font("assets/FiraSans-Regular.ttf", 24),
 		theme = map[Theme_Palette]Color{
 			.Background = {29, 31, 33, 255},
@@ -112,6 +132,10 @@ on_load :: proc(g: ^Game) {
 			.Circuit_Process = {255, 189, 47, 255},
 			.Circuit_Loaded = {251, 70, 48, 255},
 			.Process_Anim = {251, 70, 48, 255},
+			.Nand_Chip = {211, 134, 147, 255},
+			.And_Chip = {131, 165, 152, 255},
+			.Or_Chip = {184, 187, 38, 255},
+			.Not_Chip = {184, 187, 38, 255},
 		},
 		outline_weight = 2,
 		line_weight = 1,
@@ -119,115 +143,32 @@ on_load :: proc(g: ^Game) {
 		cell_size = 16,
 	}
 
-	// UI setup
-	set_ctx_current(&g.ui)
-	l := add_layout(
-		bottom_panel,
-		Background{kind = .Solid, clr = g.s.theme[.Panel_Background]},
-		.Left,
-		6,
-		4,
-		2,
-	)
-	add_widget(
-		l,
-		Button{
-			text = "hello",
-			background = {kind = .Solid},
-			clr = g.s.theme[.Background_Light],
-			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
-			callback = on_btn_pressed,
-		},
-		50,
-	)
 
-    //odinfmt: disable
-    g.prototypes["nand"] = Chip {
-		input_pins  = {true, true},
-		output_pins = make([]Value, 1),
-		bytecode = NAND_BYTECODE[:],
+	g.prototypes = map[string]Chip {
+		"nand" = Chip{
+			input_pins = make([]Value, 2),
+			output_pins = make([]Value, 1),
+			bytecode = NAND_BYTECODE[:],
+		},
+		"and" = Chip{
+			input_pins = make([]Value, 2),
+			output_pins = make([]Value, 1),
+			bytecode = AND_BYTECODE[:],
+		},
+		"or" = Chip{
+			input_pins = make([]Value, 2),
+			output_pins = make([]Value, 1),
+			bytecode = OR_BYTECODE[:],
+		},
+		"not" = Chip{
+			input_pins = make([]Value, 1),
+			output_pins = make([]Value, 1),
+			bytecode = NOT_BYTECODE[:],
+		},
 	}
-    //odinfmt: enable
+	g.prototype_id = "nand"
 	init_workbench(&g.bench, &g.s)
-	in_panel := add_layout(
-		{
-			g.bench.outline.x - (WORKBENCH_BTN_SIZE / 2) + g.s.outline_weight / 2,
-			g.bench.outline.y + (WORKBENCH_MARGIN / 4),
-			WORKBENCH_BTN_SIZE,
-			WORKBENCH_BTN_SIZE * 2 + WORKBENCH_BTN_PADDING,
-		},
-		Background{kind = .Transparent},
-		.Up,
-		0,
-		0,
-		WORKBENCH_BTN_PADDING,
-	)
-	add_widget(
-		in_panel,
-		Button{
-			text = "-",
-			background = {kind = .Solid},
-			clr = g.s.theme[.Background_Light],
-			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
-			id = Button_ID(Game_Button_ID.Input_Sub),
-			user_data = g,
-			callback = on_btn_pressed,
-		},
-		WORKBENCH_BTN_SIZE,
-	)
-	add_widget(
-		in_panel,
-		Button{
-			text = "+",
-			background = {kind = .Solid},
-			clr = g.s.theme[.Background_Light],
-			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
-			id = Button_ID(Game_Button_ID.Input_Add),
-			user_data = g,
-			callback = on_btn_pressed,
-		},
-		WORKBENCH_BTN_SIZE,
-	)
-
-	out_panel := add_layout(
-		{
-			in_panel.full.x + g.bench.outline.width + g.s.outline_weight / 2,
-			g.bench.outline.y + WORKBENCH_MARGIN / 4,
-			WORKBENCH_TOGGLE_SIZE,
-			g.bench.outline.height - WORKBENCH_MARGIN,
-		},
-		Background{kind = .Transparent},
-		.Up,
-		0,
-		0,
-		WORKBENCH_BTN_PADDING,
-	)
-	add_widget(
-		out_panel,
-		Button{
-			text = "-",
-			background = {kind = .Solid},
-			clr = g.s.theme[.Background_Light],
-			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
-			id = Button_ID(Game_Button_ID.Output_Sub),
-			user_data = g,
-			callback = on_btn_pressed,
-		},
-		WORKBENCH_BTN_SIZE,
-	)
-	add_widget(
-		out_panel,
-		Button{
-			text = "+",
-			background = {kind = .Solid},
-			clr = g.s.theme[.Background_Light],
-			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
-			id = Button_ID(Game_Button_ID.Output_Add),
-			user_data = g,
-			callback = on_btn_pressed,
-		},
-		WORKBENCH_BTN_SIZE,
-	)
+	init_game_ui(g)
 }
 
 on_update :: proc(g: ^Game) {
@@ -238,6 +179,7 @@ on_update :: proc(g: ^Game) {
 		handle_gameplay_input(g, m_pos)
 	}
 
+	g.ui.state = &g.s
 	update_ui(&g.ui, m_pos, m_left)
 }
 
@@ -246,13 +188,17 @@ on_draw :: proc(g: ^Game) {
 	draw_workbench(&g.s, &g.bench)
 
 	if g.action == .Connect_Pins {
-		start := g.cursor.selection.(^Pin_Interface)
+		// start := g.cursor.selection.(^Pin_Interface)
 		draw_line(
-			{start.rect.x + PIN_SIZE / 2, start.rect.y + PIN_SIZE / 2},
-			mouse_position(),
+			g.cursor.start_point,
+			g.cursor.current_point,
 			1,
 			g.s.theme[.Circuit_Wait],
 		)
+		for i in 0 ..< g.cursor.schema_count {
+			edge := g.cursor.circuit_schema[i]
+			draw_line(edge[0], edge[1], 1, g.s.theme[.Circuit_Wait])
+		}
 	}
 
 	draw_ui(&g.ui, &g.s)
@@ -260,25 +206,6 @@ on_draw :: proc(g: ^Game) {
 
 on_exit :: proc(g: ^Game) {
 
-}
-
-on_btn_pressed :: proc(data: rawptr, btn_id: Button_ID) {
-	g := cast(^Game)data
-	game_btn_id := Game_Button_ID(btn_id)
-
-	switch game_btn_id {
-	case .Input_Sub:
-		remove_workbench_pin(&g.bench, .Builtin_In)
-
-	case .Input_Add:
-		add_workbench_pin(&g.bench, .Builtin_In)
-
-	case .Output_Sub:
-		remove_workbench_pin(&g.bench, .Builtin_Out)
-
-	case .Output_Add:
-		add_workbench_pin(&g.bench, .Builtin_Out)
-	}
 }
 
 handle_gameplay_input :: proc(g: ^Game, m_pos: Vector) {
@@ -320,13 +247,24 @@ handle_gameplay_input :: proc(g: ^Game, m_pos: Vector) {
 			if is_mouse_just_pressed(.LEFT) {
 				g.action = .Connect_Pins
 				g.cursor.selection = g.cursor.hover
+				g.cursor.start_point = {h.rect.x + PIN_SIZE / 2, h.rect.y + PIN_SIZE / 2}
+				g.cursor.current_point = g.cursor.start_point
+				g.cursor.schema_count = 0
 			}
 
 		case:
 			if is_mouse_just_pressed(.LEFT) {
 				gx, gy := to_grid(&g.s, m_pos)
 				fixed_pos := to_screen(&g.s, gx, gy)
-				add_chip_interface(&g.bench, fixed_pos, "nand")
+				chip := g.prototypes[g.prototype_id]
+				add_chip_interface(
+					&g.bench,
+					&g.s,
+					fixed_pos,
+					g.prototype_id,
+					len(chip.input_pins),
+					len(chip.output_pins),
+				)
 			} else if is_key_pressed(.SPACE) {
 				start_workbench_simulation(&g.bench, g.prototypes)
 			}
@@ -344,13 +282,34 @@ handle_gameplay_input :: proc(g: ^Game, m_pos: Vector) {
 		}
 
 	case .Connect_Pins:
-		if is_mouse_just_pressed(.LEFT) {
+		direct_line := m_pos - g.cursor.start_point
+		x_dir := abs(direct_line.x) > abs(direct_line.y)
+		straight_line := Vector{
+			direct_line.x if x_dir else 0,
+			direct_line.y if !x_dir else 0,
+		}
+		fixed_line := to_screen(&g.s, to_grid(&g.s, straight_line))
+		g.cursor.current_point = g.cursor.start_point + fixed_line
+
+		switch {
+		case is_mouse_just_pressed(.LEFT):
 			switch h in g.cursor.hover {
 			case ^Chip_Interface, ^Workbench_Pin:
 			case ^Pin_Interface:
-				connect_pins(&g.bench, g.cursor.selection.(^Pin_Interface), h)
+				add_edge_to_circuit_schema(&g.cursor)
+				connect_pins(
+					&g.bench,
+					g.cursor.selection.(^Pin_Interface),
+					h,
+					g.cursor.circuit_schema,
+					g.cursor.schema_count,
+				)
+				deselect(g)
 			case:
+				add_edge_to_circuit_schema(&g.cursor)
 			}
+
+		case is_mouse_just_pressed(.RIGHT):
 			deselect(g)
 		}
 	}
@@ -358,8 +317,15 @@ handle_gameplay_input :: proc(g: ^Game, m_pos: Vector) {
 	update_workbench(&g.bench, elapsed_time())
 }
 
+add_edge_to_circuit_schema :: proc(c: ^Cursor) {
+	c.circuit_schema[c.schema_count] = {c.start_point, c.current_point}
+	c.schema_count += 1
+	c.start_point = c.current_point
+}
+
 deselect :: proc(g: ^Game) {
 	g.action = .Idle
 	g.cursor.selection = nil
 	g.cursor.offset = {}
+	g.cursor.schema_count = 0
 }

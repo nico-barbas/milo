@@ -30,6 +30,9 @@ Op_Code :: enum byte {
 	Op_Get_In,
 	Op_Set_Out,
 	Op_Nand,
+	Op_And,
+	Op_Or,
+	Op_Not,
 }
 
 Vm :: struct {
@@ -82,6 +85,17 @@ execute :: proc(chip: ^Chip) {
 			b := pop(vm).(bool)
 			push(vm, !(a & b))
 
+		case .Op_And:
+			a := pop(vm).(bool)
+			b := pop(vm).(bool)
+			push(vm, (a & b))
+		case .Op_Or:
+			a := pop(vm).(bool)
+			b := pop(vm).(bool)
+			push(vm, (a | b))
+		case .Op_Not:
+			a := pop(vm).(bool)
+			push(vm, !(a))
 		}
 
 		if vm.ip >= len(chip.bytecode) {
@@ -96,6 +110,23 @@ NAND_BYTECODE := [?]byte{
     byte(Op_Code.Op_Get_In), 0,
     byte(Op_Code.Op_Get_In), 1,
     byte(Op_Code.Op_Nand),
+    byte(Op_Code.Op_Set_Out), 0,
+}
+AND_BYTECODE := [?]byte{
+	byte(Op_Code.Op_Get_In), 0,
+    byte(Op_Code.Op_Get_In), 1,
+    byte(Op_Code.Op_And),
+    byte(Op_Code.Op_Set_Out), 0,
+}
+OR_BYTECODE := [?]byte{
+	byte(Op_Code.Op_Get_In), 0,
+    byte(Op_Code.Op_Get_In), 1,
+    byte(Op_Code.Op_Or),
+    byte(Op_Code.Op_Set_Out), 0,
+}
+NOT_BYTECODE := [?]byte{
+	byte(Op_Code.Op_Get_In), 0,
+    byte(Op_Code.Op_Not),
     byte(Op_Code.Op_Set_Out), 0,
 }
 //odinfmt: enable

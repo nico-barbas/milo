@@ -1,10 +1,10 @@
 package main
 
 import "core:fmt"
-import "core:math/linalg"
 
 Chip_Interface :: struct {
 	id:        string,
+	clr:       Color,
 	pos:       Vector,
 	w, h:      f32,
 	in_count:  int,
@@ -51,11 +51,19 @@ pin_compatible :: proc(k1, k2: Pin_Kind) -> bool {
 PIN_SIZE :: 20
 MARGIN :: 10
 PADDING :: PIN_SIZE + 10
-init_chip_interface :: proc(c: ^Chip_Interface, id: string, p: Vector, i, o: int) {
+init_chip_interface :: proc(
+	c: ^Chip_Interface,
+	id: string,
+	p: Vector,
+	i,
+	o: int,
+	clr: Color,
+) {
 	m := max(i, o)
 	c^ = Chip_Interface {
 		id        = id,
 		pos       = p,
+		clr       = clr,
 		w         = 100,
 		h         = f32(MARGIN * 2 + PADDING * m),
 		in_count  = i,
@@ -105,7 +113,7 @@ get_chip_center :: proc(c: ^Chip_Interface) -> Vector {
 }
 
 draw_chip_interface :: proc(s: ^State, c: Chip_Interface) {
-	draw_rect({c.pos.x, c.pos.y, c.w, c.h}, {255, 255, 255, 255})
+	draw_rect({c.pos.x, c.pos.y, c.w, c.h}, c.clr)
 
 	for pin in c.pins {
 		draw_sub_image(s.pin_sprite, s.pin_sprite.bounds, pin.rect, s.theme[.Pin])
@@ -143,10 +151,9 @@ Circuit_Interface :: struct {
 	value:      Value,
 
 	// Graphical states
-	start, end: Vector,
-	particles:  [10]Rectangle,
+	edges:      [10]Edge,
 	count:      int,
-	timer:      f32,
+	particles:  Emitter,
 }
 
 Circuit_State :: enum {
@@ -188,7 +195,7 @@ init_workbench :: proc(w: ^Workbench, s: ^State) {
 		width  = s.active_rect.width - cell * 2,
 		height = s.active_rect.height - cell * 2,
 	}
-	w.tick_rate = 2
+	w.tick_rate = WORKBENCH_TICK_RATE
 
 	// FIXME: Temp
 	add_workbench_pin(w, .Builtin_In)
@@ -196,9 +203,24 @@ init_workbench :: proc(w: ^Workbench, s: ^State) {
 	add_workbench_pin(w, .Builtin_Out)
 }
 
-add_chip_interface :: proc(w: ^Workbench, p: Vector, id: string) {
+add_chip_interface :: proc(w: ^Workbench, s: ^State, p: Vector, id: string, i, o: int) {
+	chip_id_to_clr :: proc(s: ^State, id: string) -> Color {
+		switch id {
+		case "nand":
+			return s.theme[.Nand_Chip]
+		case "and":
+			return s.theme[.And_Chip]
+		case "or":
+			return s.theme[.Or_Chip]
+		case "not":
+			return s.theme[.Not_Chip]
+
+		}
+		return {255, 0, 255, 255}
+	}
+
 	append(&w.chips, Chip_Interface{})
-	init_chip_interface(&w.chips[len(w.chips) - 1], "nand", p, 2, 1)
+	init_chip_interface(&w.chips[len(w.chips) - 1], id, p, i, o, chip_id_to_clr(s, id))
 }
 
 add_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
@@ -207,8 +229,14 @@ add_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 	offset: f32 = WORKBENCH_TOGGLE_SIZE / 2 + PIN_SIZE / 2 + WORKBENCH_TOGGLE_WIDTH
 	#partial switch kind {
 	case .Builtin_In:
+		if len(w.inputs) == WORKBENCH_MAX_PINS {
+			return
+		}
 		pins = &w.inputs
 	case .Builtin_Out:
+		if len(w.outputs) == WORKBENCH_MAX_PINS {
+			return
+		}
 		pins = &w.outputs
 		x += w.outline.width
 		offset *= -1
@@ -223,9 +251,15 @@ remove_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 
 	#partial switch kind {
 	case .Builtin_In:
+		if len(w.inputs) == WORKBENCH_MIN_PINS {
+			return
+		}
 		handle = w.inputs[len(w.inputs) - 1].handle
 		ordered_remove(&w.inputs, len(w.inputs) - 1)
 	case .Builtin_Out:
+		if len(w.outputs) == WORKBENCH_MIN_PINS {
+			return
+		}
 		handle = w.outputs[len(w.outputs) - 1].handle
 		ordered_remove(&w.outputs, len(w.outputs) - 1)
 	}
@@ -340,7 +374,13 @@ get_pin :: proc(w: ^Workbench, h: Pin_Handle) -> (pin: Pin_Interface) {
 	return
 }
 
-connect_pins :: proc(w: ^Workbench, start: ^Pin_Interface, end: ^Pin_Interface) {
+connect_pins :: proc(
+	w: ^Workbench,
+	start: ^Pin_Interface,
+	end: ^Pin_Interface,
+	edges: [10]Edge,
+	count: int,
+) {
 	if pin_compatible(start.handle.kind, end.handle.kind) {
 		insert := true
 		if circuit, exist := w.circuits[end.handle]; exist {
@@ -350,8 +390,10 @@ connect_pins :: proc(w: ^Workbench, start: ^Pin_Interface, end: ^Pin_Interface) 
 		}
 		if insert {
 			w.circuits[end.handle] = {
-				from = start.handle,
-				to   = end.handle,
+				from  = start.handle,
+				to    = end.handle,
+				edges = edges,
+				count = count,
 			}
 		}
 	}
@@ -363,10 +405,12 @@ start_workbench_simulation :: proc(w: ^Workbench, prototypes: map[string]Chip) {
 
 	for k, _ in w.circuits {
 		circuit := &w.circuits[k]
-		start := get_pin(w, circuit.from).rect
-		end := get_pin(w, circuit.to).rect
-		circuit.start = {start.x, start.y}
-		circuit.end = {end.x, end.y}
+		init_emitter(
+			&circuit.particles,
+			4,
+			circuit.edges[:circuit.count],
+			WORKBENCH_TICK_RATE,
+		)
 		if circuit.from.kind == .Builtin_In {
 			circuit.value = w.inputs[circuit.from.id].on
 			circuit.state = .Processing
@@ -408,6 +452,10 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 	if len(w.open) == 0 && len(w.currents) == 0 {
 		end_workbench_simulation(w)
 		return
+	}
+
+	for circuit in w.currents {
+		update_emitter(&circuit.particles, dt)
 	}
 
 	advance := false
@@ -484,38 +532,6 @@ update_workbench :: proc(w: ^Workbench, dt: f32) {
 			}
 		}
 	}
-
-	CIRCUIT_TICK_RATE :: 0.5
-	for handle in w.circuits {
-		circuit := &w.circuits[handle]
-		if circuit.state == .Processing {
-			circuit.timer += dt
-			if circuit.timer >= CIRCUIT_TICK_RATE {
-				circuit.timer = 0
-				circuit.particles[circuit.count] = {
-					circuit.start.x,
-					circuit.start.y,
-					10,
-					10,
-				}
-				circuit.count += 1
-			}
-
-			dir := circuit.end - circuit.start
-			norm := linalg.normalize(dir)
-			for j in 0 ..< circuit.count {
-				part := &circuit.particles[j]
-				part.x += norm.x * dt * 250
-				part.y += norm.y * dt * 250
-
-				l := linalg.length2(Vector{part.x, part.y} - circuit.start)
-				if l >= linalg.length2(dir) {
-					circuit.particles[j] = circuit.particles[circuit.count]
-					circuit.count -= 1
-				}
-			}
-		}
-	}
 }
 
 draw_workbench :: proc(s: ^State, w: ^Workbench) {
@@ -533,21 +549,19 @@ draw_workbench :: proc(s: ^State, w: ^Workbench) {
 
 	draw_rect_line(w.outline, s.outline_weight, s.theme[.Separator])
 
-	for to, circuit in w.circuits {
-		start := get_pin(w, circuit.from)
-		end := get_pin(w, to)
-		draw_line(
-			{start.rect.x + PIN_SIZE / 2, start.rect.y + PIN_SIZE / 2},
-			{end.rect.x + PIN_SIZE / 2, end.rect.y + PIN_SIZE / 2},
-			s.line_weight,
-			circuit_state_to_clr(s, circuit.state),
-		)
+	for to, circuit in &w.circuits {
+		for edge in circuit.edges[:circuit.count] {
+			draw_line(
+				edge[0],
+				edge[1],
+				s.line_weight,
+				circuit_state_to_clr(s, circuit.state),
+			)
+		}
 
 		if w.state == .Simulating {
 			if circuit.state != .Processing do continue
-			for i in 0 ..< circuit.count {
-				draw_rect(circuit.particles[i], s.theme[.Process_Anim])
-			}
+			draw_particles(s, circuit.particles)
 		}
 	}
 
@@ -588,15 +602,36 @@ draw_workbench :: proc(s: ^State, w: ^Workbench) {
 			y += ascend
 		}
 	}
+}
 
+compile_workbench :: proc(w: ^Workbench) -> []byte {
+	for k, _ in w.circuits {
+		circuit := &w.circuits[k]
+		init_emitter(
+			&circuit.particles,
+			4,
+			circuit.edges[:circuit.count],
+			WORKBENCH_TICK_RATE,
+		)
+		if circuit.from.kind == .Builtin_In {
+			circuit.value = w.inputs[circuit.from.id].on
+			circuit.state = .Processing
+			append(&w.currents, &w.circuits[k])
+		} else {
+			circuit.value = nil
+			circuit.state = .Waiting
+			append(&w.open, &w.circuits[k])
+		}
 
-	// if w.state == .Simulating {
-	// 	for circuit in &w.circuit_sim {
-	// 		// b := circuit.value.(bool)
-	// 		if circuit.state != .Processing do continue
-	// 		for particle in circuit.particles[:circuit.count] {
-	// 			draw_rect(particle, TRUE_CLR) //if b else FALSE_CLR
-	// 		}
-	// 	}
-	// }
+		if circuit.to.kind == .Builtin_Out {
+			w.outputs[circuit.to.id].on = false
+		}
+	}
+
+	if len(w.currents) == 0 {
+		fmt.println("No pins connected to Workbench Input Pins, stopping simulation")
+		clear(&w.currents)
+		clear(&w.open)
+		end_workbench_simulation(w)
+	}
 }

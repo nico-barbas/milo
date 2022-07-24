@@ -1,6 +1,7 @@
 package main
 
 import "core:strings"
+import "core:math/linalg"
 import rl "vendor:raylib"
 
 to_grid :: proc(s: ^State, p: Vector) -> (x, y: int) {
@@ -26,6 +27,18 @@ load_font :: proc(path: string, size: int) -> Font {
 	}
 }
 
+measure_text :: proc(f: Font, text: string) -> Vector {
+	return rl.MeasureTextEx(f, cstring(raw_data(text)), f.size, 0)
+}
+
+center_text :: proc(f: Font, text: string, bounds: Rectangle) -> Vector {
+	text_size := measure_text(f, text)
+	return {
+		bounds.x + (bounds.width - text_size.x) / 2,
+		bounds.y + (bounds.height - text_size.y) / 2,
+	}
+}
+
 Rectangle :: rl.Rectangle
 in_rect_bounds :: proc(r: Rectangle, p: Vector) -> bool {
 	if p.x < r.x || p.x > r.x + r.width {
@@ -39,6 +52,16 @@ in_rect_bounds :: proc(r: Rectangle, p: Vector) -> bool {
 
 
 Vector :: rl.Vector2
+Edge :: [2]Vector
+
+edge_slice_length :: proc(e: []Edge) -> f32 {
+	length: f32
+	for edge in e {
+		length += linalg.length(edge[0] - edge[1])
+	}
+	return length
+}
+
 Color :: rl.Color
 
 highlight :: proc(c: Color, s: f32) -> Color {
@@ -91,4 +114,20 @@ draw_sub_image :: proc(
 	r: f32 = 0,
 ) {
 	rl.DrawTexturePro(i.data, src, dst, o, r, clr)
+}
+
+
+Timer :: struct {
+	tick_rate:   f32,
+	accumulator: f32,
+	reset:       bool,
+}
+
+advance_timer :: proc(t: ^Timer, dt: f32) -> (finished: bool) {
+	t.accumulator += dt
+	if t.accumulator >= t.tick_rate {
+		finished = true
+		if t.reset do t.accumulator = 0
+	}
+	return
 }
