@@ -64,6 +64,13 @@ Theme_Palette :: enum {
 	Process_Anim,
 }
 
+Game_Button_ID :: enum Button_ID {
+	Input_Add,
+	Input_Sub,
+	Output_Add,
+	Output_Sub,
+}
+
 Action :: enum {
 	Idle,
 	Drag_Chip,
@@ -129,6 +136,7 @@ on_load :: proc(g: ^Game) {
 			background = {kind = .Solid},
 			clr = g.s.theme[.Background_Light],
 			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+			callback = on_btn_pressed,
 		},
 		50,
 	)
@@ -146,7 +154,7 @@ on_load :: proc(g: ^Game) {
 			g.bench.outline.x - (WORKBENCH_BTN_SIZE / 2) + g.s.outline_weight / 2,
 			g.bench.outline.y + (WORKBENCH_MARGIN / 4),
 			WORKBENCH_BTN_SIZE,
-			g.bench.outline.height - WORKBENCH_MARGIN,
+			WORKBENCH_BTN_SIZE * 2 + WORKBENCH_BTN_PADDING,
 		},
 		Background{kind = .Transparent},
 		.Up,
@@ -161,6 +169,9 @@ on_load :: proc(g: ^Game) {
 			background = {kind = .Solid},
 			clr = g.s.theme[.Background_Light],
 			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+			id = Button_ID(Game_Button_ID.Input_Sub),
+			user_data = g,
+			callback = on_btn_pressed,
 		},
 		WORKBENCH_BTN_SIZE,
 	)
@@ -171,6 +182,9 @@ on_load :: proc(g: ^Game) {
 			background = {kind = .Solid},
 			clr = g.s.theme[.Background_Light],
 			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+			id = Button_ID(Game_Button_ID.Input_Add),
+			user_data = g,
+			callback = on_btn_pressed,
 		},
 		WORKBENCH_BTN_SIZE,
 	)
@@ -195,6 +209,9 @@ on_load :: proc(g: ^Game) {
 			background = {kind = .Solid},
 			clr = g.s.theme[.Background_Light],
 			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+			id = Button_ID(Game_Button_ID.Output_Sub),
+			user_data = g,
+			callback = on_btn_pressed,
 		},
 		WORKBENCH_BTN_SIZE,
 	)
@@ -205,6 +222,9 @@ on_load :: proc(g: ^Game) {
 			background = {kind = .Solid},
 			clr = g.s.theme[.Background_Light],
 			hover_clr = highlight(g.s.theme[.Background_Light], 1.3),
+			id = Button_ID(Game_Button_ID.Output_Add),
+			user_data = g,
+			callback = on_btn_pressed,
 		},
 		WORKBENCH_BTN_SIZE,
 	)
@@ -212,87 +232,13 @@ on_load :: proc(g: ^Game) {
 
 on_update :: proc(g: ^Game) {
 	m_pos := mouse_position()
+	m_left := is_mouse_pressed(.LEFT)
 
-
-	g.cursor.hover = nil
-	for _, i in g.bench.chips {
-		chip := &g.bench.chips[i]
-		if s := is_chip_selected(chip, m_pos); s != nil {
-			g.cursor.hover = s
-			g.cursor.chip_id = i
-			break
-		}
-	}
-	if g.cursor.hover == nil {
-		if s := is_workench_pin_selected(&g.bench, m_pos); s != nil {
-			g.cursor.hover = s
-		}
+	if !is_over_ui(m_pos) {
+		handle_gameplay_input(g, m_pos)
 	}
 
-	// fmt.println(g.cursor.hover)
-
-	switch g.action {
-	case .Idle:
-		switch h in g.cursor.hover {
-		case ^Chip_Interface:
-			switch {
-			case is_mouse_pressed(.LEFT):
-				g.action = .Drag_Chip
-				g.cursor.selection = g.cursor.hover
-				g.cursor.offset = m_pos - (h.pos + get_chip_center(h))
-
-			case is_mouse_pressed(.RIGHT):
-				remove_chip_interface(&g.bench, h, g.cursor.chip_id)
-			}
-
-		case ^Workbench_Pin:
-			if is_mouse_pressed(.LEFT) && h.handle.kind == .Builtin_In {
-				h.on = !h.on
-			}
-
-		case ^Pin_Interface:
-			if is_mouse_pressed(.LEFT) {
-				g.action = .Connect_Pins
-				g.cursor.selection = g.cursor.hover
-			}
-
-		case:
-			if is_mouse_pressed(.LEFT) {
-				gx, gy := to_grid(&g.s, m_pos)
-				fixed_pos := to_screen(&g.s, gx, gy)
-				add_chip_interface(&g.bench, fixed_pos, "nand")
-			} else if is_key_pressed(.SPACE) {
-				start_workbench_simulation(&g.bench, g.prototypes)
-			}
-		}
-
-	case .Drag_Chip:
-		if is_mouse_released(.LEFT) {
-			deselect(g)
-			return
-		} else {
-			gx, gy := to_grid(&g.s, m_pos - g.cursor.offset)
-			fixed_pos := to_screen(&g.s, gx, gy)
-			drag := g.cursor.selection.(^Chip_Interface)
-			move_chip_interface(drag, fixed_pos)
-		}
-
-	case .Connect_Pins:
-		if is_mouse_pressed(.LEFT) {
-			switch h in g.cursor.hover {
-			case ^Chip_Interface, ^Workbench_Pin:
-			case ^Pin_Interface:
-				connect_pins(&g.bench, g.cursor.selection.(^Pin_Interface), h)
-			case:
-			}
-			deselect(g)
-		}
-	}
-
-	update_workbench(&g.bench, elapsed_time())
-
-	g.ui.m_pos = m_pos
-	update_ui(&g.ui)
+	update_ui(&g.ui, m_pos, m_left)
 }
 
 on_draw :: proc(g: ^Game) {
@@ -316,12 +262,104 @@ on_exit :: proc(g: ^Game) {
 
 }
 
+on_btn_pressed :: proc(data: rawptr, btn_id: Button_ID) {
+	g := cast(^Game)data
+	game_btn_id := Game_Button_ID(btn_id)
+
+	switch game_btn_id {
+	case .Input_Sub:
+		remove_workbench_pin(&g.bench, .Builtin_In)
+
+	case .Input_Add:
+		add_workbench_pin(&g.bench, .Builtin_In)
+
+	case .Output_Sub:
+		remove_workbench_pin(&g.bench, .Builtin_Out)
+
+	case .Output_Add:
+		add_workbench_pin(&g.bench, .Builtin_Out)
+	}
+}
+
+handle_gameplay_input :: proc(g: ^Game, m_pos: Vector) {
+	g.cursor.hover = nil
+	for _, i in g.bench.chips {
+		chip := &g.bench.chips[i]
+		if s := is_chip_selected(chip, m_pos); s != nil {
+			g.cursor.hover = s
+			g.cursor.chip_id = i
+			break
+		}
+	}
+	if g.cursor.hover == nil {
+		if s := is_workench_pin_selected(&g.bench, m_pos); s != nil {
+			g.cursor.hover = s
+		}
+	}
+
+	switch g.action {
+	case .Idle:
+		switch h in g.cursor.hover {
+		case ^Chip_Interface:
+			switch {
+			case is_mouse_just_pressed(.LEFT):
+				g.action = .Drag_Chip
+				g.cursor.selection = g.cursor.hover
+				g.cursor.offset = m_pos - (h.pos + get_chip_center(h))
+
+			case is_mouse_just_pressed(.RIGHT):
+				remove_chip_interface(&g.bench, h, g.cursor.chip_id)
+			}
+
+		case ^Workbench_Pin:
+			if is_mouse_just_pressed(.LEFT) && h.handle.kind == .Builtin_In {
+				h.on = !h.on
+			}
+
+		case ^Pin_Interface:
+			if is_mouse_just_pressed(.LEFT) {
+				g.action = .Connect_Pins
+				g.cursor.selection = g.cursor.hover
+			}
+
+		case:
+			if is_mouse_just_pressed(.LEFT) {
+				gx, gy := to_grid(&g.s, m_pos)
+				fixed_pos := to_screen(&g.s, gx, gy)
+				add_chip_interface(&g.bench, fixed_pos, "nand")
+			} else if is_key_pressed(.SPACE) {
+				start_workbench_simulation(&g.bench, g.prototypes)
+			}
+		}
+
+	case .Drag_Chip:
+		if is_mouse_released(.LEFT) {
+			deselect(g)
+			return
+		} else {
+			gx, gy := to_grid(&g.s, m_pos - g.cursor.offset)
+			fixed_pos := to_screen(&g.s, gx, gy)
+			drag := g.cursor.selection.(^Chip_Interface)
+			move_chip_interface(drag, fixed_pos)
+		}
+
+	case .Connect_Pins:
+		if is_mouse_just_pressed(.LEFT) {
+			switch h in g.cursor.hover {
+			case ^Chip_Interface, ^Workbench_Pin:
+			case ^Pin_Interface:
+				connect_pins(&g.bench, g.cursor.selection.(^Pin_Interface), h)
+			case:
+			}
+			deselect(g)
+		}
+	}
+
+	update_workbench(&g.bench, elapsed_time())
+}
+
 deselect :: proc(g: ^Game) {
 	g.action = .Idle
 	g.cursor.selection = nil
 	g.cursor.offset = {}
-}
-
-on_btn_pressed_callback :: proc(data: rawptr, btn_id: int) {
-
 }

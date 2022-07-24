@@ -4,9 +4,9 @@ Milo is a small fun side project. It is meant a way to explore hardware in an in
 
 Roadmap:
 - [x] Customizable workbench input pins value
-- [ ] Customizable workbench pin counts
+- [x] Customizable workbench pin counts
 - [ ] Redo circuit layouting
 - [ ] Redo Process animation particles
-- [ ] Way to remvoe circuits  
+- [ ] Way to remove circuits  
 - [ ] Save and compile custom chips
 - [ ] Extend pin support to busses

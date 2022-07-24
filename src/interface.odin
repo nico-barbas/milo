@@ -204,7 +204,6 @@ add_chip_interface :: proc(w: ^Workbench, p: Vector, id: string) {
 add_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 	pins: ^[dynamic]Workbench_Pin
 	x: f32 = w.outline.x
-	y: f32 = WORKBENCH_MARGIN
 	offset: f32 = WORKBENCH_TOGGLE_SIZE / 2 + PIN_SIZE / 2 + WORKBENCH_TOGGLE_WIDTH
 	#partial switch kind {
 	case .Builtin_In:
@@ -216,6 +215,51 @@ add_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 	}
 
 	append(pins, Workbench_Pin{})
+	set_workbench_pins_position(w, kind)
+}
+
+remove_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
+	handle: Pin_Handle
+
+	#partial switch kind {
+	case .Builtin_In:
+		handle = w.inputs[len(w.inputs) - 1].handle
+		ordered_remove(&w.inputs, len(w.inputs) - 1)
+	case .Builtin_Out:
+		handle = w.outputs[len(w.outputs) - 1].handle
+		ordered_remove(&w.outputs, len(w.outputs) - 1)
+	}
+	for to, circuit in w.circuits {
+		#partial switch kind {
+		case .Builtin_In:
+			if pin_handle_equal(handle, circuit.from) {
+				delete_key(&w.circuits, to)
+			}
+		case .Builtin_Out:
+			if pin_handle_equal(handle, to) {
+				delete_key(&w.circuits, to)
+			}
+		}
+	}
+
+	set_workbench_pins_position(w, kind)
+}
+
+set_workbench_pins_position :: proc(w: ^Workbench, kind: Pin_Kind) {
+	pins: ^[dynamic]Workbench_Pin
+	x: f32 = w.outline.x
+	y: f32 = WORKBENCH_MARGIN
+	offset: f32 = WORKBENCH_TOGGLE_SIZE / 2 + PIN_SIZE / 2 + WORKBENCH_TOGGLE_WIDTH
+
+	#partial switch kind {
+	case .Builtin_In:
+		pins = &w.inputs
+	case .Builtin_Out:
+		pins = &w.outputs
+		x += w.outline.width
+		offset *= -1
+	}
+
 	padding := (w.outline.height - WORKBENCH_MARGIN * 2) / f32(len(pins))
 	for _, i in pins {
 		pins[i] = {
@@ -244,30 +288,6 @@ add_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
 			WORKBENCH_TOGGLE_HEIGHT,
 		}
 		y += padding
-	}
-}
-
-remove_workbench_pin :: proc(w: ^Workbench, kind: Pin_Kind) {
-	handle: Pin_Handle
-	#partial switch kind {
-	case .Builtin_In:
-		handle = w.inputs[len(w.inputs) - 1].handle
-		ordered_remove(&w.inputs, len(w.inputs) - 1)
-	case .Builtin_Out:
-		handle = w.outputs[len(w.outputs) - 1].handle
-		ordered_remove(&w.outputs, len(w.outputs) - 1)
-	}
-	for to, circuit in w.circuits {
-		#partial switch kind {
-		case .Builtin_In:
-			if pin_handle_equal(handle, circuit.from) {
-				delete_key(&w.circuits, to)
-			}
-		case .Builtin_Out:
-			if pin_handle_equal(handle, to) {
-				delete_key(&w.circuits, to)
-			}
-		}
 	}
 }
 

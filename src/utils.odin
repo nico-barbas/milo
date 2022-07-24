@@ -70,7 +70,8 @@ load_image :: proc(path: string, filter: Image_Filter) -> Image {
 // Input
 elapsed_time :: rl.GetFrameTime
 mouse_position :: rl.GetMousePosition
-is_mouse_pressed :: rl.IsMouseButtonPressed
+is_mouse_pressed :: rl.IsMouseButtonDown
+is_mouse_just_pressed :: rl.IsMouseButtonPressed
 is_mouse_released :: rl.IsMouseButtonReleased
 is_key_pressed :: rl.IsKeyPressed
 

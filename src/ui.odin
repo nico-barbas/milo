@@ -69,7 +69,7 @@ cut_rect :: proc(
 UI_Context :: struct {
 	layouts: [dynamic]Layout,
 	m_pos:   Vector,
-	m_left: bool,
+	m_left:  bool,
 	pm_left: bool,
 }
 _ctx: ^UI_Context
@@ -78,7 +78,7 @@ set_ctx_current :: proc(ctx: ^UI_Context) {
 	_ctx = ctx
 }
 
-update_ui :: proc(ctx: ^UI_Context,m_pos: Vector,  m_left: bool) {
+update_ui :: proc(ctx: ^UI_Context, m_pos: Vector, m_left: bool) {
 	ctx.pm_left = ctx.m_left
 	ctx.m_left = m_left
 	ctx.m_pos = m_pos
@@ -87,7 +87,7 @@ update_ui :: proc(ctx: ^UI_Context,m_pos: Vector,  m_left: bool) {
 			switch w in widget {
 			case Button:
 				b := w
-				update_btn(&b, ctx.m_pos, ctx.m_left)
+				update_btn(&b, ctx.m_pos, ctx.m_left, ctx.pm_left)
 				layout.widgets[i] = b
 			}
 		}
@@ -114,6 +114,24 @@ draw_ui :: proc(ctx: ^UI_Context, s: ^State) {
 			}
 		}
 	}
+}
+
+is_over_ui :: proc(p: Vector) -> bool {
+	for layout in _ctx.layouts {
+		switch layout.background.kind {
+		case .Transparent:
+			for widget in layout.widgets {
+				if is_over_widget(widget, p) {
+					return true
+				}
+			}
+		case .Solid, .Slice:
+			if in_rect_bounds(layout.full, p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 Layout :: struct {
@@ -158,12 +176,20 @@ Widget :: union {
 	Button,
 }
 
+is_over_widget :: proc(widget: Widget, p: Vector) -> bool {
+	switch w in widget {
+	case Button:
+		return in_rect_bounds(w.rect, p)
+	}
+	return false
+}
+
 Button_ID :: distinct int
 
 Button :: struct {
 	rect:       Rectangle,
 	background: Background,
-	id: Button_ID,
+	id:         Button_ID,
 	state:      enum {
 		None,
 		Hovered,
@@ -173,13 +199,13 @@ Button :: struct {
 	clr:        Color,
 	press_clr:  Color,
 	hover_clr:  Color,
-	user_data: rawptr,
-	callback: proc(data: rawptr, id: Button_ID),
+	user_data:  rawptr,
+	callback:   proc(data: rawptr, id: Button_ID),
 }
 
 update_btn :: proc(b: ^Button, m_pos: Vector, m_left, pm_left: bool) {
 	if in_rect_bounds(b.rect, m_pos) {
-		if m_left {
+		if !m_left && pm_left {
 			b.state = .Pressed
 			b.background.clr = b.hover_clr
 			if b.callback != nil {
